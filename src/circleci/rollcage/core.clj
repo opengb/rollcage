@@ -212,15 +212,17 @@
 
 (s/defn ^:private client* :- Client
   [access-token :- (s/maybe String)
-   {:keys [os hostname environment code-version file-root result-fn block-fields]
+   {:keys [os hostname environment code-version file-root result-fn block-fields scrub-strings]
     :or {environment "production"}}]
-  (let [os        (or os (guess-os))
+  (let [_ (println "IN CLIENT*")
+        os        (or os (guess-os))
         hostname  (or hostname (guess-hostname))
         file-root (or file-root (guess-file-root))
         result-fn (or result-fn (constantly nil))]
     {:access-token access-token
      :result-fn result-fn
      :block-fields block-fields
+     :scrub-strings scrub-strings
      :send-fn (if (string/blank? access-token)
                 send-item-null
                 send-item-http)
@@ -310,22 +312,38 @@
        item)
       item)))
 
+(defn scrub-string
+  [s to-scrub]
+  (string/replace s to-scrub "**REDACTED**"))
+
+(defn get-scrubbed-exception-message
+  [^Throwable e scrub-strings]
+  (let [msg (.getMessage e)]
+    (if (seq scrub-strings)
+      (reduce scrub-string msg scrub-strings)
+      msg)))
+
+
 (defn notify
   "Report an exception to Rollbar."
   ([^String level client ^Throwable exception]
    (notify level client exception {}))
-  ([^String level {:keys [result-fn send-fn block-fields] :as client} ^Throwable exception {:keys [url params]}]
+  ([^String level {:keys [result-fn send-fn block-fields scrub-strings] :as client} ^Throwable exception {:keys [url params]}]
    (let [params (merge params (throwables/merged-ex-data exception))
-         scrubbed (scrub params block-fields)
-         item (make-rollbar client level exception url scrubbed)
+         scrubbed-fields (scrub params block-fields)
+         message (get-scrubbed-exception-message exception scrub-strings)
+         scrubbed-exception (assoc exception
+                                     :message message)
+         item (make-rollbar client level scrubbed-exception url scrubbed-fields)
+         _ (println "IN MODIFIED NOTIFY")
          result (try
-                  (send-fn endpoint exception item)
+                  (send-fn endpoint scrubbed-exception item)
                   (catch Exception e
                     ;; Return an error that matches the shape of the Rollbar API
                     ;; with an added :exception key
                     {:err 1
                      :exception e
-                     :message (.getMessage e)}))]
+                     :message message}))]
      (result-fn exception result)
      result)))
 
@@ -340,9 +358,11 @@
   ([client]
    (setup-uncaught-exception-handler client (constantly nil)))
   ([client handler]
+   (println "SETTING UP UNCAUGHT EXCEPTION HANDLER")
    (Thread/setDefaultUncaughtExceptionHandler
     (reify Thread$UncaughtExceptionHandler
       (uncaughtException [_ thread ex]
+        (println "UNCAUGHT EXCEPTION HANDLER TRIGGERED")
         (report-uncaught-exception "critical" client ex thread)
         (handler thread ex))))))
 
