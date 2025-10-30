@@ -196,15 +196,27 @@
    :skipped true
    :result {:uuid (str (:uuid data))}})
 
+(defn scrub-string
+  [s to-scrub]
+  (string/replace s to-scrub "**REDACTED**"))
+
+(defn scrub-body
+  [s scrub-strings]
+  (if (seq scrub-strings)
+    (reduce scrub-string s scrub-strings)
+    s))
+
 (defn- send-item-http
   "Send a Rollbar item using the HTTP REST API.
   Return the result JSON parsed as a Map"
-  [^String endpoint ^Throwable exception item]
+  [^String endpoint ^Throwable exception item scrub-strings]
   (logging/log (rollbar-to-logging (get-in item [:data :level]))
                exception
                "Sending exception to Rollbar")
-  (let [result (post endpoint
-                     {:body (json/encode item)
+  (let [encoded (json/encode item)
+        scrubbed (scrub-body encoded scrub-strings)
+        result (post endpoint
+                     {:body scrubbed
                       :conn-timeout http-conn-timeout
                       :socket-timeout http-socket-timeout
                       :content-type :json})]
@@ -212,7 +224,7 @@
 
 (s/defn ^:private client* :- Client
   [access-token :- (s/maybe String)
-   {:keys [os hostname environment code-version file-root result-fn block-fields]
+   {:keys [os hostname environment code-version file-root result-fn block-fields scrub-strings]
     :or {environment "production"}}]
   (let [os        (or os (guess-os))
         hostname  (or hostname (guess-hostname))
@@ -221,6 +233,7 @@
     {:access-token access-token
      :result-fn result-fn
      :block-fields block-fields
+     :scrub-strings scrub-strings
      :send-fn (if (string/blank? access-token)
                 send-item-null
                 send-item-http)
@@ -314,12 +327,12 @@
   "Report an exception to Rollbar."
   ([^String level client ^Throwable exception]
    (notify level client exception {}))
-  ([^String level {:keys [result-fn send-fn block-fields] :as client} ^Throwable exception {:keys [url params]}]
+  ([^String level {:keys [result-fn send-fn block-fields scrub-strings] :as client} ^Throwable exception {:keys [url params]}]
    (let [params (merge params (throwables/merged-ex-data exception))
          scrubbed (scrub params block-fields)
          item (make-rollbar client level exception url scrubbed)
          result (try
-                  (send-fn endpoint exception item)
+                  (send-fn endpoint exception item scrub-strings)
                   (catch Exception e
                     ;; Return an error that matches the shape of the Rollbar API
                     ;; with an added :exception key
