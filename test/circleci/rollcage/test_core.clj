@@ -102,11 +102,13 @@
     (is (= "access-token" (:access-token c))))
   (let [c (client/client "access-token" {:os "DOS"
                                          :environment "alpha"
-                                         :block-fields [:foo :bar]})]
+                                         :block-fields [:foo :bar]
+                                         :block-strings ["my-secret"]})]
     (is (= "access-token" (:access-token c)))
     (is (= "alpha" (-> c :data :environment)))
     (is (= "DOS" (-> c :data :platform)))
-    (is (= [:foo :bar] (:block-fields c))))
+    (is (= [:foo :bar] (:block-fields c)))
+    (is (= ["my-secret"] (:block-strings c))))
   (is (thrown-with-msg? ExceptionInfo #"Output of client\* does not match schema"
                         (client/client "e" {:hostname 1})))
   (is (thrown-with-msg? ExceptionInfo #"Output of client\* does not match schema"
