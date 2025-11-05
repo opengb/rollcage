@@ -22,6 +22,7 @@
 
 (def ^:private Client {:access-token (s/maybe String)
                        :block-fields (s/maybe [s/Keyword])
+                       :block-strings (s/maybe [String])
                        :result-fn clojure.lang.IFn
                        :send-fn clojure.lang.IFn
                        :data {:environment (s/maybe String)
@@ -199,12 +200,16 @@
 (defn- send-item-http
   "Send a Rollbar item using the HTTP REST API.
   Return the result JSON parsed as a Map"
-  [^String endpoint ^Throwable exception item]
+  [^String endpoint ^Throwable exception item block-strings]
   (logging/log (rollbar-to-logging (get-in item [:data :level]))
                exception
                "Sending exception to Rollbar")
-  (let [result (post endpoint
-                     {:body (json/encode item)
+  (let [encoded (json/encode item)
+        scrubbed (reduce #(string/replace %1 %2 "**REDACTED**")
+                         encoded
+                         block-strings)
+        result (post endpoint
+                     {:body scrubbed
                       :conn-timeout http-conn-timeout
                       :socket-timeout http-socket-timeout
                       :content-type :json})]
@@ -212,7 +217,7 @@
 
 (s/defn ^:private client* :- Client
   [access-token :- (s/maybe String)
-   {:keys [os hostname environment code-version file-root result-fn block-fields]
+   {:keys [os hostname environment code-version file-root result-fn block-fields block-strings]
     :or {environment "production"}}]
   (let [os        (or os (guess-os))
         hostname  (or hostname (guess-hostname))
@@ -221,6 +226,7 @@
     {:access-token access-token
      :result-fn result-fn
      :block-fields block-fields
+     :block-strings block-strings
      :send-fn (if (string/blank? access-token)
                 send-item-null
                 send-item-http)
@@ -274,6 +280,11 @@
   `:first-name`, `:first_name` `\"first-name\"` `\"first_name\"`
   Example: [:first-name :last-name :address]
 
+  - `:block-strings` A list of strings to remove/scrub from the payload prior to
+  sending to Rollbar. Any occurence of these strings within the payload, as any key, value, or part thereof,
+  will be replaced with the string `**REDACTED**`.
+  Example: [\"sensitive_env_var_value\", \"another_secret_value\"]
+
   See https://rollbar.com/docs/api/items_post/
 
   More information on System Properties:
@@ -314,12 +325,12 @@
   "Report an exception to Rollbar."
   ([^String level client ^Throwable exception]
    (notify level client exception {}))
-  ([^String level {:keys [result-fn send-fn block-fields] :as client} ^Throwable exception {:keys [url params]}]
+  ([^String level {:keys [result-fn send-fn block-fields block-strings] :as client} ^Throwable exception {:keys [url params]}]
    (let [params (merge params (throwables/merged-ex-data exception))
          scrubbed (scrub params block-fields)
          item (make-rollbar client level exception url scrubbed)
          result (try
-                  (send-fn endpoint exception item)
+                  (send-fn endpoint exception item block-strings)
                   (catch Exception e
                     ;; Return an error that matches the shape of the Rollbar API
                     ;; with an added :exception key
