@@ -168,6 +168,7 @@
    level  :- String
    exception :- Throwable
    url :- (s/maybe String)
+   user-ip :- (s/maybe String)
    custom :- (s/maybe {s/Any s/Any})]
   ;; TODO: Pass request parameters through to here
   ;; TODO: add person here
@@ -178,7 +179,8 @@
       (assoc-in [:data :timestamp]         (timestamp))
       (assoc-in [:data :uuid]              (uuid))
       (assoc-in [:data :custom]            custom)
-      (assoc-in [:data :request :url]      url)))
+      (assoc-in [:data :request :url]      url)
+      (cond-> user-ip (assoc-in [:data :request :user_ip] user-ip))))
 
 (def ^:private rollbar-to-logging
   "A look-up table to map from Rollbar severity levels to tools.logging levels"
@@ -325,10 +327,10 @@
   "Report an exception to Rollbar."
   ([^String level client ^Throwable exception]
    (notify level client exception {}))
-  ([^String level {:keys [result-fn send-fn block-fields block-strings] :as client} ^Throwable exception {:keys [url params]}]
+  ([^String level {:keys [result-fn send-fn block-fields block-strings] :as client} ^Throwable exception {:keys [url params user-ip]}]
    (let [params (merge params (throwables/merged-ex-data exception))
          scrubbed (scrub params block-fields)
-         item (make-rollbar client level exception url scrubbed)
+         item (make-rollbar client level exception url user-ip scrubbed)
          result (try
                   (send-fn endpoint exception item block-strings)
                   (catch Exception e
