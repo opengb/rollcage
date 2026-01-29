@@ -180,7 +180,7 @@
       (assoc-in [:data :uuid]              (uuid))
       (assoc-in [:data :custom]            custom)
       (assoc-in [:data :request :url]      url)
-      (cond-> user-ip (assoc-in [:data :request :user_ip] user-ip))))
+      (assoc-in [:data :request :user_ip]  user-ip)))
 
 (def ^:private rollbar-to-logging
   "A look-up table to map from Rollbar severity levels to tools.logging levels"
